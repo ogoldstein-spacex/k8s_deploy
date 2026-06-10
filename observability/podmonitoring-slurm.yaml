@@ -1,0 +1,30 @@
+# Scrape Slurm metrics (jobs / nodes / partitions / scheduler) into GKE managed
+# Prometheus. Requires the Slurm chart's metrics to be enabled (slurmrestd
+# exposes /metrics/* ). Verify the pod labels + port with:
+#   kubectl -n slurm get pods --show-labels
+#   kubectl -n slurm get svc
+#
+# If the label/port below don't match your release, adjust `selector` /
+# `endpoints[].port` accordingly.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: slurm-metrics
+  namespace: slurm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: slurmrestd
+  endpoints:
+    - port: slurmrestd
+      path: /metrics/nodes
+      interval: 30s
+    - port: slurmrestd
+      path: /metrics/jobs
+      interval: 30s
+    - port: slurmrestd
+      path: /metrics/partitions
+      interval: 30s
+    - port: slurmrestd
+      path: /metrics/scheduler
+      interval: 30s

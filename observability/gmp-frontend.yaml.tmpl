@@ -1,0 +1,49 @@
+# Google Managed Prometheus query frontend, so self-hosted Grafana (or any
+# Prometheus-API client) can read GMP. Rendered by the Makefile (envsubst).
+# Vars: ${PROJECT_ID}. Update the image tag to a current GMP release if needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gmp-frontend
+  namespace: monitoring
+  labels:
+    app: gmp-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gmp-frontend
+  template:
+    metadata:
+      labels:
+        app: gmp-frontend
+    spec:
+      nodeSelector:
+        ml-pool: system
+      automountServiceAccountToken: true
+      containers:
+        - name: frontend
+          image: gke.gcr.io/prometheus-engine/frontend:v0.15.3-gke.0
+          args:
+            - "--web.listen-address=:9090"
+            - "--query.project-id=${PROJECT_ID}"
+          ports:
+            - name: web
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gmp-frontend
+  namespace: monitoring
+spec:
+  selector:
+    app: gmp-frontend
+  ports:
+    - name: web
+      port: 9090
+      targetPort: web

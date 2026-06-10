@@ -1,0 +1,24 @@
+# cert-manager is a hard prerequisite for the Slinky slurm-operator (it signs
+# the webhook + internal Slurm certificates).
+#
+# Install:
+#   helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+#     --namespace cert-manager --create-namespace \
+#     -f bootstrap/cert-manager-values.yaml
+crds:
+  enabled: true
+
+# Pin to the CPU/system pool so it never lands on (or blocks) a GPU node.
+nodeSelector:
+  ml-pool: system
+webhook:
+  nodeSelector:
+    ml-pool: system
+cainjector:
+  nodeSelector:
+    ml-pool: system
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi

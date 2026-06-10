@@ -1,0 +1,15 @@
+# Terraform
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform/terraform.tfvars
+
+# Local secrets (SSH keys for Jupyter -> Slurm)
+.secrets/
+
+# Rendered values are kept in git ONLY if you use the Argo CD GitOps flow.
+# For the Helm-first flow they are transient; uncomment to ignore them:
+# slurm/slurm-values.yaml
+# jupyter/values.yaml
+# bootstrap/gke-network-objects.yaml

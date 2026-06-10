@@ -1,0 +1,29 @@
+# Uses the RENDERED jupyter/values.yaml (run `make render` and commit it).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jupyterhub
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: slurm # same ns as Slurm so notebooks share NFS + reach login svc
+  sources:
+    - repoURL: https://hub.jupyter.org/helm-chart/
+      chart: jupyterhub
+      targetRevision: 4.3.3
+      helm:
+        valueFiles:
+          - $values/jupyter/values.yaml
+    - repoURL: REPLACE_WITH_GIT_REPO_URL
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

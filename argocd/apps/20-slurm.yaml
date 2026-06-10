@@ -1,0 +1,31 @@
+# Uses the RENDERED slurm/slurm-values.yaml (run `make render` and commit it,
+# since Argo reads files straight from git and cannot run envsubst).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: slurm
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: slurm
+  sources:
+    - repoURL: ghcr.io/slinkyproject/charts
+      chart: slurm
+      targetRevision: 1.0.2
+      helm:
+        valueFiles:
+          - $values/slurm/slurm-values.yaml
+    - repoURL: REPLACE_WITH_GIT_REPO_URL
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

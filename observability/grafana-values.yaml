@@ -1,0 +1,50 @@
+# Optional self-hosted Grafana (helm: grafana/grafana) wired to Google Managed
+# Prometheus via the gmp-frontend service. GPU panels come from DCGM metrics;
+# Slurm panels from the slurm PodMonitoring.
+#
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install grafana grafana/grafana -n monitoring -f observability/grafana-values.yaml
+nodeSelector:
+  ml-pool: system
+
+service:
+  type: ClusterIP # access via: kubectl -n monitoring port-forward svc/grafana 3000:80
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Managed Prometheus
+        type: prometheus
+        access: proxy
+        url: http://gmp-frontend.monitoring.svc:9090
+        isDefault: true
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+dashboards:
+  default:
+    # NVIDIA DCGM Exporter dashboard.
+    nvidia-dcgm:
+      gnetId: 12239
+      revision: 2
+      datasource: Managed Prometheus
+    # Node / cluster overview.
+    node-exporter:
+      gnetId: 1860
+      revision: 37
+      datasource: Managed Prometheus
+
+# Set an admin password (or use an existing secret).
+adminPassword: "${GRAFANA_ADMIN_PASSWORD}"

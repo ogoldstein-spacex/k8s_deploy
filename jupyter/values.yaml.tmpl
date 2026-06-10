@@ -1,0 +1,137 @@
+# Zero-to-JupyterHub (z2jh) values. TEMPLATE: the Makefile renders ${...} with
+# envsubst into jupyter/values.yaml before `helm install`.
+# Vars (Makefile defaults):
+#   JUPYTER_IMAGE_REPO  e.g. us-central1-docker.pkg.dev/PROJECT/ml-images/jupyter-slurm
+#   JUPYTER_IMAGE_TAG   e.g. latest
+#   FILESTORE_IP        NFS server IP (shared with the Slurm cluster)
+#
+# Deploy JupyterHub into the `slurm` namespace so notebooks share the cluster's
+# NFS /home and can reach the login Service. Submit keys come from the
+# `jupyter-slurm-ssh` secret (see `make jupyter-ssh-key`).
+
+hub:
+  nodeSelector:
+    ml-pool: system
+  config:
+    JupyterHub:
+      # DEV default. For real teams switch to GitHubOAuthenticator / Google /
+      # OAuth and remove DummyAuthenticator.
+      authenticator_class: dummy
+    DummyAuthenticator:
+      password: "${JUPYTER_DUMMY_PASSWORD}"
+    Authenticator:
+      admin_users:
+        - admin
+
+proxy:
+  service:
+    type: ClusterIP # access via: kubectl -n slurm port-forward svc/proxy-public 8000:80
+  chp:
+    nodeSelector:
+      ml-pool: system
+
+scheduling:
+  userScheduler:
+    enabled: false
+
+cull:
+  enabled: true
+  timeout: 3600 # cull idle single-user servers after 1h (saves GPU $)
+  every: 300
+
+singleuser:
+  image:
+    name: ${JUPYTER_IMAGE_REPO}
+    tag: ${JUPYTER_IMAGE_TAG}
+  defaultUrl: /lab
+  startTimeout: 600 # GPU nodes may need to autoscale up first
+  extraEnv:
+    SLURM_LOGIN_HOST: slurm-login-slinky.slurm.svc.cluster.local
+    SLURM_LOGIN_USER: root
+    SLURM_SSH_KEY: /etc/slurm-ssh/id_ed25519
+  # Make the shared cluster filesystem the notebook home so saved scripts are
+  # submittable on the login node by the same path.
+  storage:
+    type: none
+    extraVolumes:
+      - name: nfs-home
+        nfs:
+          server: ${FILESTORE_IP}
+          path: /shared
+      - name: slurm-ssh
+        secret:
+          secretName: jupyter-slurm-ssh
+          defaultMode: 0400
+    extraVolumeMounts:
+      - name: nfs-home
+        mountPath: /home
+      - name: slurm-ssh
+        mountPath: /etc/slurm-ssh
+        readOnly: true
+  initContainers:
+    # Ensure the per-user home exists and is owned by jovyan (uid 1000).
+    - name: fix-home-perms
+      image: busybox:1.36
+      command: ["sh", "-c", "mkdir -p /home/jovyan && chown 1000:100 /home/jovyan"]
+      securityContext:
+        runAsUser: 0
+      volumeMounts:
+        - name: nfs-home
+          mountPath: /home
+  profileList:
+    - display_name: "CPU only"
+      description: "Light prototyping, data prep, job submission to the cluster."
+      default: true
+      kubespawner_override:
+        node_selector:
+          ml-pool: system
+        cpu_limit: 4
+        mem_limit: 16G
+    - display_name: "GPU dev - 1x L4"
+      description: "Quick single-GPU model tests on the cheap autoscaling pool."
+      kubespawner_override:
+        node_selector:
+          cloud.google.com/gke-accelerator: nvidia-l4
+        extra_resource_limits:
+          nvidia.com/gpu: "1"
+        mem_limit: 40G
+    - display_name: "GPU - 8x H200 (full RDMA node)"
+      description: "EXPENSIVE: claims an entire H200 node. Use for short multi-GPU debugging only."
+      kubespawner_override:
+        node_selector:
+          cloud.google.com/gke-accelerator: nvidia-h200-141gb
+        extra_resource_limits:
+          nvidia.com/gpu: "8"
+        mem_limit: 1000G
+        extra_annotations:
+          networking.gke.io/default-interface: "eth0"
+          networking.gke.io/interfaces: |
+            [
+              {"interfaceName":"eth0","network":"default"},
+              {"interfaceName":"eth2","network":"rdma-0"},
+              {"interfaceName":"eth3","network":"rdma-1"},
+              {"interfaceName":"eth4","network":"rdma-2"},
+              {"interfaceName":"eth5","network":"rdma-3"},
+              {"interfaceName":"eth6","network":"rdma-4"},
+              {"interfaceName":"eth7","network":"rdma-5"},
+              {"interfaceName":"eth8","network":"rdma-6"},
+              {"interfaceName":"eth9","network":"rdma-7"}
+            ]
+        volumes:
+          - name: nvidia
+            hostPath:
+              path: /home/kubernetes/bin/nvidia
+          - name: gib
+            hostPath:
+              path: /home/kubernetes/bin/gib
+          - name: shared-memory
+            emptyDir:
+              medium: Memory
+              sizeLimit: 250Gi
+        volume_mounts:
+          - name: nvidia
+            mountPath: /usr/local/nvidia
+          - name: gib
+            mountPath: /usr/local/gib
+          - name: shared-memory
+            mountPath: /dev/shm

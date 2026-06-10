@@ -1,0 +1,21 @@
+# Values for the slurm-operator chart (oci://ghcr.io/slinkyproject/charts/slurm-operator).
+# Install order:
+#   helm install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds
+#   helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
+#     -n slinky --create-namespace -f slurm/operator-values.yaml
+#
+# Verify field names against the chart you pin:
+#   helm show values oci://ghcr.io/slinkyproject/charts/slurm-operator
+operator:
+  replicas: 1
+  # Keep the controller off GPU nodes.
+  nodeSelector:
+    ml-pool: system
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# The operator watches the webhook certs issued by cert-manager.
+certManager:
+  enabled: true

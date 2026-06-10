@@ -1,0 +1,39 @@
+# Copy to terraform.tfvars and edit. Values here drive the whole platform.
+
+project_id = "my-gcp-project"
+region     = "us-central1"
+zone       = "us-central1-b" # must match your GPU reservation + RoCE profile zone
+
+name_prefix = "ml"
+
+###############################################################################
+# GPU training pool
+###############################################################################
+# A3 Ultra (H200, 141GB):
+gpu_machine_type     = "a3-ultragpu-8g"
+gpu_accelerator_type = "nvidia-h200-141gb"
+gpu_per_node         = 8
+# --- or A4 (B200, 180GB): ---
+# gpu_machine_type     = "a4-highgpu-8g"
+# gpu_accelerator_type = "nvidia-b200"
+
+gpu_min_nodes = 0
+gpu_max_nodes = 4
+
+# Capacity model: "reservation" (recommended for H200/B200), "flex_start", or "spot".
+gpu_capacity_mode = "reservation"
+reservation_name  = "my-h200-reservation" # required when capacity mode = reservation
+
+###############################################################################
+# Dev / JupyterLab pool (cheap, scales to zero)
+###############################################################################
+dev_machine_type     = "g2-standard-12"
+dev_accelerator_type = "nvidia-l4"
+dev_max_nodes        = 2
+
+###############################################################################
+# Shared storage
+###############################################################################
+filestore_enabled     = true
+filestore_tier        = "ZONAL"
+filestore_capacity_gb = 1024

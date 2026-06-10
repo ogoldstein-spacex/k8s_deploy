@@ -1,0 +1,207 @@
+# Slurm cluster values (oci://ghcr.io/slinkyproject/charts/slurm).
+#
+# This is a TEMPLATE. The Makefile renders ${...} placeholders with `envsubst`
+# (scoped to just these vars) into slurm/slurm-values.yaml, then runs helm.
+# Vars (with Makefile defaults):
+#   SLURMD_IMAGE_REPO    e.g. us-central1-docker.pkg.dev/PROJECT/ml-images/slurmd-cuda
+#   SLURMD_IMAGE_TAG     e.g. 25.11
+#   GPU_ACCELERATOR      nvidia-h200-141gb (A3 Ultra) | nvidia-b200 (A4)
+#   GPU_GRES             gpu:h200:8 | gpu:b200:8
+#   GPU_NODESET_REPLICAS number of GPU nodes to claim (EACH IS EXPENSIVE)
+#   FILESTORE_IP         NFS server IP from `terraform output filestore_ip`
+#
+# Verify field names against the chart you pin:
+#   helm show values oci://ghcr.io/slinkyproject/charts/slurm
+
+###############################################################################
+# Cluster-wide Slurm config files.
+###############################################################################
+configFiles:
+  # Auto-detect NVIDIA GPUs as GRES via NVML (libs come from the host mount).
+  # If detection is flaky inside the container, replace with an explicit map:
+  #   Name=gpu File=/dev/nvidia[0-7]
+  gres.conf: |
+    AutoDetect=nvidia
+  # cgroup v2 device/memory constraints so jobs can't escape their allocation.
+  cgroup.conf: |
+    CgroupPlugin=cgroup/v2
+    ConstrainCores=yes
+    ConstrainRAMSpace=yes
+    ConstrainDevices=yes
+    ConstrainSwapSpace=yes
+
+###############################################################################
+# Controller (slurmctld)
+###############################################################################
+controller:
+  slurmctld:
+    image:
+      repository: ghcr.io/slinkyproject/slurmctld
+      tag: 25.11-ubuntu24.04
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+  persistence:
+    enabled: true
+    storageClassName: premium-rwo
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 8Gi
+  # GresTypes must include "gpu" for GPU scheduling.
+  extraConfMap:
+    GresTypes: gpu
+    # Pack jobs tightly and allow oversubscription off by default.
+    SchedulerParameters: defer,batch_sched_delay=5
+    # Surface useful node state to operators.
+    ReturnToService: "2"
+  podSpec:
+    nodeSelector:
+      ml-pool: system
+
+###############################################################################
+# Accounting (slurmdbd + bundled MariaDB) -> sacct, fair-share, usage reports.
+###############################################################################
+accounting:
+  enabled: true
+  slurmdbd:
+    image:
+      repository: ghcr.io/slinkyproject/slurmdbd
+      tag: 25.11-ubuntu24.04
+    podSpec:
+      nodeSelector:
+        ml-pool: system
+
+# Bundled MariaDB subchart (used when accounting.enabled and no external host).
+mariadb:
+  enabled: true
+  primary:
+    nodeSelector:
+      ml-pool: system
+    persistence:
+      enabled: true
+      storageClass: premium-rwo
+      size: 8Gi
+
+###############################################################################
+# Login node (SSH in, then sbatch/srun). Reachable via:
+#   kubectl -n slurm port-forward svc/slurm-login-slinky 2222:22
+###############################################################################
+loginsets:
+  slinky:
+    enabled: true
+    login:
+      image:
+        repository: ghcr.io/slinkyproject/login
+        tag: 25.11-ubuntu24.04
+      volumeMounts:
+        - name: nfs-home
+          mountPath: /home
+    # Add your SSH public key(s) here to log in as a user.
+    rootSshAuthorizedKeys: ""
+    service:
+      spec:
+        type: ClusterIP
+    podSpec:
+      nodeSelector:
+        ml-pool: system
+      volumes:
+        - name: nfs-home
+          nfs:
+            server: ${FILESTORE_IP}
+            path: /shared
+
+###############################################################################
+# GPU NodeSet: H200/B200 slurmd workers wired for GPUDirect-RDMA.
+#
+# Each pod takes a whole node (8 GPUs + all RDMA NICs) -- a hard GPUDirect
+# requirement -- so replicas == number of GPU nodes you pay for.
+###############################################################################
+nodesets:
+  gpu-rdma:
+    enabled: true
+    scalingMode: StatefulSet
+    replicas: ${GPU_NODESET_REPLICAS}
+    slurmd:
+      image:
+        repository: ${SLURMD_IMAGE_REPO}
+        tag: ${SLURMD_IMAGE_TAG}
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/nvidia/lib64
+        - name: NCCL_NET
+          value: gIB
+      resources:
+        limits:
+          nvidia.com/gpu: 8
+        requests:
+          nvidia.com/gpu: 8
+      volumeMounts:
+        - name: nvidia
+          mountPath: /usr/local/nvidia
+        - name: gib
+          mountPath: /usr/local/gib
+        - name: shared-memory
+          mountPath: /dev/shm
+        - name: nfs-home
+          mountPath: /home
+    # Define the node's GRES so Slurm can schedule --gres=gpu:8.
+    extraConfMap:
+      Gres: ["${GPU_GRES}"]
+    partition:
+      enabled: true
+      configMap:
+        State: UP
+        Default: "YES"
+        MaxTime: UNLIMITED
+    # Pod annotations: attach the 8 RDMA NICs (eth2..eth9) created in bootstrap.
+    metadata:
+      annotations:
+        networking.gke.io/default-interface: "eth0"
+        networking.gke.io/interfaces: |
+          [
+            {"interfaceName":"eth0","network":"default"},
+            {"interfaceName":"eth2","network":"rdma-0"},
+            {"interfaceName":"eth3","network":"rdma-1"},
+            {"interfaceName":"eth4","network":"rdma-2"},
+            {"interfaceName":"eth5","network":"rdma-3"},
+            {"interfaceName":"eth6","network":"rdma-4"},
+            {"interfaceName":"eth7","network":"rdma-5"},
+            {"interfaceName":"eth8","network":"rdma-6"},
+            {"interfaceName":"eth9","network":"rdma-7"}
+          ]
+    podSpec:
+      nodeSelector:
+        cloud.google.com/gke-accelerator: ${GPU_ACCELERATOR}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        # Only needed for flex-start/queued provisioning pools; harmless otherwise.
+        - key: cloud.google.com/gke-queued
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: nvidia
+          hostPath:
+            path: /home/kubernetes/bin/nvidia
+        - name: gib
+          hostPath:
+            path: /home/kubernetes/bin/gib
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: 250Gi
+        - name: nfs-home
+          nfs:
+            server: ${FILESTORE_IP}
+            path: /shared
+
+###############################################################################
+# NVIDIA DCGM integration -> per-job GPU metrics (scraped by managed Prometheus).
+###############################################################################
+vendor:
+  nvidia:
+    dcgm:
+      enabled: true
