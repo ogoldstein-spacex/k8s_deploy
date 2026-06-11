@@ -27,9 +27,9 @@ flowchart TB
     gpuPool["GPU pool: a3-ultragpu-8g H200 RDMA (0..N)"]
     fs[(Filestore NFS /shared)]
   end
-  subgraph apps [Argo CD ApplicationSet]
+  subgraph apps [Argo CD managed]
+    gib["gpu-fabric app: NCCL GIB DaemonSet + Network objects"]
     certmgr[cert-manager]
-    gib[NCCL GIB DaemonSet]
     slurm["Slurm: controller + accounting + login + gpu NodeSet"]
     jhub["JupyterHub: CPU / L4 / H200 profiles"]
   end
@@ -46,7 +46,9 @@ flowchart TB
 
 ## Prerequisites
 
-- `gcloud`, `kubectl`, `helm` (v3.5+), `terraform` (>= 1.6), `docker`, `envsubst`.
+- `gcloud`, `kubectl`, `terraform` (>= 1.6), and `docker`. Terraform renders all
+  values, so `envsubst` is not needed; `helm` (v3.5+) is only required for the
+  Helm-first alternative (the Argo path renders charts in-cluster).
 - A GCP project with billing and **H200/B200 capacity** — almost always a
   **reservation** (set `gpu_capacity_mode = "reservation"` + `reservation_name`).
   DWS flex-start and Spot are also supported via `gpu_capacity_mode`.
@@ -67,7 +69,9 @@ make nccl-test  # OPTIONAL but recommended: prove the RDMA fabric (needs 2 GPU n
 ```
 
 `make all` runs `infra -> creds -> images -> gitops`. `make help` lists targets.
-Watch the rollout: `kubectl -n argocd get applications -w`.
+Watch the rollout: `kubectl -n argocd get applications -w`. Open the Argo UI with
+`kubectl -n argocd port-forward svc/argocd-server 8080:443` (the admin password
+is printed by `make gitops`).
 
 > `make gitops` runs `jupyter-ssh-key`, which prints a public key. Paste it into
 > `loginsets.slinky.rootSshAuthorizedKeys` in
@@ -101,12 +105,14 @@ make observability
 
 | Path | What |
 | --- | --- |
-| `terraform/` | GKE cluster, RoCE VPC + 8 subnets, node pools, Filestore, Artifact Registry |
-| `bootstrap/` | GKE multi-network objects, NCCL GIB installer, cert-manager values |
+| `terraform/` | GKE cluster, RoCE VPC + 8 subnets, node pools, Filestore, Artifact Registry, Argo CD install |
+| `terraform/templates/` | `.tftpl` sources Terraform renders into `gitops/` (values + Argo manifests) |
+| `gitops/bootstrap/` | TF-rendered Argo `AppProject`, `ApplicationSet`, and `gpu-fabric` Application |
+| `gitops/fabric/` | Vendored NCCL GIB DaemonSet + TF-rendered GKE Network objects (Kustomize) |
+| `gitops/rendered/` | TF-rendered Slurm + JupyterHub Helm values |
 | `slurm/` | slurm-operator values + custom `slurmd` image |
 | `jupyter/` | JupyterLab image (SSH submit wrappers) |
-| `terraform/templates/` | `.tftpl` sources Terraform renders into `gitops/` |
-| `gitops/` | Argo CD source of truth: ApplicationSet, fabric, TF-rendered values |
+| `bootstrap/` | cert-manager Helm values |
 | `observability/` | DCGM (managed) + Slurm PodMonitoring + optional Grafana |
 | `examples/` | NCCL RDMA test, 2-node DDP sbatch job, quick-test notebook |
 
@@ -124,7 +130,7 @@ make observability
 
 - GPU pool scales to **zero**; do interactive work on the L4 pool.
 - Idle notebooks are culled after 1h.
-- H200/B200 nodes are expensive while running — keep `GPU_NODESET_REPLICAS`
+- H200/B200 nodes are expensive while running — keep `gpu_nodeset_replicas`
   and `gpu_max_nodes` tight, and scale down when idle.
 
 ## Gotchas / things to verify on your cluster
