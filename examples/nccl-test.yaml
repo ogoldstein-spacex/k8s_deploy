@@ -5,10 +5,10 @@
 # mounts that the Slurm NodeSet will use, so a green run here means Slurm will
 # work too.
 #
-# Prereqs (handled by `make nccl-test`):
-#   1. GKE network objects applied      (bootstrap/gke-network-objects.yaml.tmpl)
-#   2. NCCL GIB installer DaemonSet      (bootstrap step 2)
-#   3. JobSet controller installed       (registry.k8s.io/jobset)
+# Prereqs (handled by Argo `gpu-fabric` app, or `kubectl apply -k gitops/fabric`):
+#   1. GKE network objects applied      (gitops/fabric/gke-network-objects.yaml)
+#   2. NCCL GIB installer DaemonSet      (gitops/fabric/nccl-rdma-installer.yaml)
+#   3. JobSet controller installed       (make nccl-test installs it)
 #   4. >= 2 nodes available in the gpu-rdma pool (scale it up; this costs money)
 #
 # Watch: kubectl logs -f jobs/nccl-allreduce-worker-0

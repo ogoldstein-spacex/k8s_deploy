@@ -10,6 +10,18 @@ terraform {
       source  = "hashicorp/google-beta"
       version = ">= 6.8.0"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.12"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.30"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.4"
+    }
   }
 
   # Remote state is strongly recommended for a shared platform. Uncomment and

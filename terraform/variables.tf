@@ -208,3 +208,54 @@ variable "filestore_capacity_gb" {
   description = "Filestore capacity in GiB (ZONAL/SSD minimums apply)."
   default     = 1024
 }
+
+###############################################################################
+# GitOps (Argo CD primary). Terraform renders all dynamic values + the Argo
+# manifests into ../gitops, installs Argo CD, and you commit + let Argo sync.
+###############################################################################
+
+variable "enable_argocd" {
+  type        = bool
+  description = "Install Argo CD via Terraform and render the gitops/ manifests."
+  default     = true
+}
+
+variable "gitops_repo_url" {
+  type        = string
+  description = "Git URL Argo CD pulls manifests + values from (this repo)."
+  default     = "https://github.com/ogoldstein-spacex/k8s_deploy.git"
+}
+
+variable "gitops_repo_revision" {
+  type        = string
+  description = "Git revision (branch/tag) Argo CD tracks."
+  default     = "main"
+}
+
+variable "gpu_nodeset_replicas" {
+  type        = number
+  description = "Number of GPU slurmd workers (= GPU nodes claimed). Each is expensive."
+  default     = 2
+}
+
+variable "slurmd_image_tag" {
+  type        = string
+  description = "Tag of the custom slurmd-cuda image in Artifact Registry."
+  default     = "25.11"
+}
+
+variable "jupyter_image_tag" {
+  type        = string
+  description = "Tag of the jupyter-slurm image in Artifact Registry."
+  default     = "latest"
+}
+
+variable "jupyter_dummy_password" {
+  type        = string
+  description = "DEV-only JupyterHub DummyAuthenticator password. Replace with real OAuth."
+  default     = "changeme"
+  sensitive   = true
+}
+
+# Helm charts float to their latest version: Argo CD installs the latest
+# argo-cd chart and every ApplicationSet entry uses targetRevision "*".

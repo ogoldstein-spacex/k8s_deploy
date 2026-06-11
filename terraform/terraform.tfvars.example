@@ -37,3 +37,12 @@ dev_max_nodes        = 2
 filestore_enabled     = true
 filestore_tier        = "ZONAL"
 filestore_capacity_gb = 1024
+
+###############################################################################
+# GitOps (Argo CD primary)
+###############################################################################
+enable_argocd        = true
+gitops_repo_url      = "https://github.com/ogoldstein-spacex/k8s_deploy.git"
+gitops_repo_revision = "main"
+gpu_nodeset_replicas = 2 # GPU nodes Slurm claims; each is expensive
+# Helm charts float to latest (Argo targetRevision "*"); nothing to pin.

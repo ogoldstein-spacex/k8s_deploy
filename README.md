@@ -10,8 +10,10 @@ VRAM-intensive models** on Google Kubernetes Engine:
   (`sbatch`/`srun`/`squeue`) over **GPUDirect-RDMA** for line-rate NCCL.
 - **JupyterHub** gives a dev environment to prototype on a cheap L4 and then
   submit full jobs to the Slurm cluster (shared NFS home, SSH-based submit).
-- **Helm + a Makefile** for first bring-up; **Argo CD** app-of-apps available
-  for steady-state GitOps.
+- **Argo CD is the primary deployment path**: Terraform installs Argo CD and
+  renders all dynamic manifests + values into `gitops/`; an `ApplicationSet`
+  reconciles cert-manager, the Slurm stack, and JupyterHub with sync waves.
+  A **Helm-first** path (same Terraform-rendered values) is kept for ad-hoc use.
 
 ## Architecture
 
@@ -25,7 +27,7 @@ flowchart TB
     gpuPool["GPU pool: a3-ultragpu-8g H200 RDMA (0..N)"]
     fs[(Filestore NFS /shared)]
   end
-  subgraph apps [Helm / Argo CD]
+  subgraph apps [Argo CD ApplicationSet]
     certmgr[cert-manager]
     gib[NCCL GIB DaemonSet]
     slurm["Slurm: controller + accounting + login + gpu NodeSet"]
@@ -50,28 +52,38 @@ flowchart TB
   DWS flex-start and Spot are also supported via `gpu_capacity_mode`.
 - Quota for the chosen accelerator in your `zone`.
 
-## Quickstart
+## Quickstart (Argo CD / GitOps)
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars   # edit project_id, zone, reservation_name, ...
+cp terraform.tfvars.example terraform.tfvars   # edit project_id, zone, reservation_name, gitops_repo_url, ...
 cd ..
 
-make infra      # GKE + RDMA VPCs + node pools + Filestore
-make creds      # kubectl context
-make images     # build/push slurmd + jupyter images to Artifact Registry
-make bootstrap  # GKE Network objects + NCCL GIB DaemonSet + cert-manager + JobSet
+make infra    # GKE + RDMA VPCs + pools + Filestore; installs Argo CD; renders gitops/
+make creds    # kubectl context
+make images   # build/push slurmd + jupyter images to Artifact Registry
+make gitops   # commit gitops/ + apply the Argo root app (Argo then syncs everything)
 make nccl-test  # OPTIONAL but recommended: prove the RDMA fabric (needs 2 GPU nodes)
-make slurm      # Slinky operator + Slurm cluster
-make jupyter    # JupyterHub (prints an SSH public key to add to slurm values)
-make observability
 ```
 
-`make all` runs the whole chain. `make help` lists every target.
+`make all` runs `infra -> creds -> images -> gitops`. `make help` lists targets.
+Watch the rollout: `kubectl -n argocd get applications -w`.
 
-> After `make jupyter-ssh-key` prints the public key, paste it into
-> `loginsets.slinky.rootSshAuthorizedKeys` in `slurm/slurm-values.yaml.tmpl` and
-> re-run `make slurm` so notebooks can submit jobs to the login node.
+> `make gitops` runs `jupyter-ssh-key`, which prints a public key. Paste it into
+> `loginsets.slinky.rootSshAuthorizedKeys` in
+> `terraform/templates/slurm-values.yaml.tftpl`, then re-run `make infra gitops`
+> so notebooks can submit jobs to the login node.
+
+### Helm-first alternative (no Argo)
+
+Same Terraform-rendered values, applied directly:
+
+```bash
+make bootstrap   # GPU fabric (kubectl -k gitops/fabric) + cert-manager + JobSet
+make slurm       # Slinky operator + Slurm cluster
+make jupyter     # JupyterHub
+make observability
+```
 
 ## Day-to-day workflow
 
@@ -91,10 +103,11 @@ make observability
 | --- | --- |
 | `terraform/` | GKE cluster, RoCE VPC + 8 subnets, node pools, Filestore, Artifact Registry |
 | `bootstrap/` | GKE multi-network objects, NCCL GIB installer, cert-manager values |
-| `slurm/` | slurm-operator values, Slurm cluster values, custom `slurmd` image |
-| `jupyter/` | z2jh values + JupyterLab image (SSH submit wrappers) |
+| `slurm/` | slurm-operator values + custom `slurmd` image |
+| `jupyter/` | JupyterLab image (SSH submit wrappers) |
+| `terraform/templates/` | `.tftpl` sources Terraform renders into `gitops/` |
+| `gitops/` | Argo CD source of truth: ApplicationSet, fabric, TF-rendered values |
 | `observability/` | DCGM (managed) + Slurm PodMonitoring + optional Grafana |
-| `argocd/` | Optional app-of-apps GitOps overlay |
 | `examples/` | NCCL RDMA test, 2-node DDP sbatch job, quick-test notebook |
 
 ## Hardware / capacity notes
@@ -116,10 +129,13 @@ make observability
 
 ## Gotchas / things to verify on your cluster
 
-- Pin Helm chart versions you tested (`slurm`, `slurm-operator`, `cert-manager`,
-  `jupyterhub`) — see `argocd/apps/*` and the Makefile.
+- Helm charts float to their latest version (Argo `targetRevision: "*"`, and
+  Argo CD itself installs the latest chart). Pin later if you need repeatability.
 - Slurm chart field names evolve; cross-check against
   `helm show values oci://ghcr.io/slinkyproject/charts/slurm`.
 - If NCCL test pods stay `SchedulingGated`, remove the `schedulingGates` block in
   `examples/nccl-test.yaml`.
 - Do **not** combine the GKE DRANET driver with the multi-network API used here.
+- If Argo shows the `slurm` app perpetually `OutOfSync` on a generated Secret
+  (munge/JWT), add an `ignoreDifferences` entry in `gitops/bootstrap/appset.yaml`.
+- Private repo: register repo credentials with Argo so it can read `gitops/`.
