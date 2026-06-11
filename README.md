@@ -46,13 +46,52 @@ flowchart TB
 
 ## Prerequisites
 
-- `gcloud`, `kubectl`, `terraform` (>= 1.6), and `docker`. Terraform renders all
-  values, so `envsubst` is not needed; `helm` (v3.5+) is only required for the
-  Helm-first alternative (the Argo path renders charts in-cluster).
+- CLIs: `terraform` (>= 1.6), `gcloud` (+ `gke-gcloud-auth-plugin`), `kubectl`,
+  `docker`, and `git`. `helm` (v3.5+) is only required for the Helm-first
+  alternative (the Argo path renders charts in-cluster). `make` entry points
+  fail fast with a clear message if a tool is missing (`check-%` preflight).
 - A GCP project with billing and **H200/B200 capacity** — almost always a
   **reservation** (set `gpu_capacity_mode = "reservation"` + `reservation_name`).
   DWS flex-start and Spot are also supported via `gpu_capacity_mode`.
 - Quota for the chosen accelerator in your `zone`.
+- Auth for Terraform: on a GCE VM with a service account this is automatic
+  (metadata server); otherwise run
+  `gcloud auth login && gcloud auth application-default login`.
+
+### Installing the CLIs
+
+**CentOS / RHEL / Rocky:**
+
+```bash
+# Terraform (HashiCorp repo)
+sudo yum install -y yum-utils
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+sudo yum install -y terraform
+
+# gcloud + kubectl + GKE auth plugin (use el8 in baseurl for CentOS/RHEL 8)
+sudo tee /etc/yum.repos.d/google-cloud-sdk.repo <<'EOF'
+[google-cloud-cli]
+name=Google Cloud CLI
+baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF
+sudo yum install -y google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin kubectl
+
+# Docker CE (needed for `make images`)
+sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo yum install -y docker-ce docker-ce-cli containerd.io
+sudo systemctl enable --now docker
+```
+
+**macOS:** `brew install hashicorp/tap/terraform google-cloud-sdk kubectl` and
+Docker Desktop; then `gcloud components install gke-gcloud-auth-plugin`.
+
+**Any distro (no root):** download the `terraform` static binary from
+[developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install)
+into `~/bin` and add it to `PATH`.
 
 ## Quickstart (Argo CD / GitOps)
 

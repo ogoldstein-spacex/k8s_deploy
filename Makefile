@@ -22,21 +22,31 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
+# Preflight: fail fast with a clear message when a required CLI is missing
+# (instead of bash's cryptic "command not found" / make Error 127).
+check-%:
+	@command -v $* >/dev/null 2>&1 || { \
+	  echo ""; \
+	  echo "ERROR: required tool '$*' is not installed or not on PATH."; \
+	  echo "       See 'Prerequisites' in README.md for install commands."; \
+	  echo ""; \
+	  exit 1; }
+
 ## --- Phase 1: infrastructure (also installs Argo CD + renders gitops/) -------
-infra: ## terraform init + apply: GKE, RDMA VPCs, pools, Filestore, Argo CD, gitops render
+infra: check-terraform ## terraform init + apply: GKE, RDMA VPCs, pools, Filestore, Argo CD, gitops render
 	$(TF) init
 	$(TF) apply
 
-creds: ## Point kubectl at the new cluster
+creds: check-gcloud ## Point kubectl at the new cluster
 	gcloud container clusters get-credentials $(CLUSTER_NAME) --location $(REGION) --project $(PROJECT_ID)
 
 ## --- Phase 2: images ---------------------------------------------------------
-slurmd-image: ## Build + push the slurmd CUDA image
+slurmd-image: check-docker check-gcloud ## Build + push the slurmd CUDA image
 	gcloud auth configure-docker $(REGION)-docker.pkg.dev -q
 	docker build -t $(AR)/slurmd-cuda:$(SLURMD_IMAGE_TAG) slurm/images/slurmd-cuda
 	docker push $(AR)/slurmd-cuda:$(SLURMD_IMAGE_TAG)
 
-jupyter-image: ## Build + push the JupyterLab image
+jupyter-image: check-docker check-gcloud ## Build + push the JupyterLab image
 	gcloud auth configure-docker $(REGION)-docker.pkg.dev -q
 	docker build -t $(AR)/jupyter-slurm:$(JUPYTER_IMAGE_TAG) jupyter/images/jupyter-slurm
 	docker push $(AR)/jupyter-slurm:$(JUPYTER_IMAGE_TAG)
@@ -44,7 +54,7 @@ jupyter-image: ## Build + push the JupyterLab image
 images: slurmd-image jupyter-image ## Build + push both images
 
 ## --- Phase 3: GitOps (PRIMARY) ----------------------------------------------
-gitops: jupyter-ssh-key ## Commit the TF-rendered gitops/ and apply the Argo root app
+gitops: check-git check-kubectl jupyter-ssh-key ## Commit the TF-rendered gitops/ and apply the Argo root app
 	git add gitops
 	@git diff --cached --quiet || git commit -m "chore: update gitops rendered manifests"
 	git push
@@ -53,7 +63,7 @@ gitops: jupyter-ssh-key ## Commit the TF-rendered gitops/ and apply the Argo roo
 	  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 	@echo "UI: kubectl -n argocd port-forward svc/argocd-server 8080:443"
 
-jupyter-ssh-key: ## Generate the notebook->login SSH key + secret (prints public key)
+jupyter-ssh-key: check-kubectl ## Generate the notebook->login SSH key + secret (prints public key)
 	@mkdir -p .secrets
 	@test -f .secrets/id_ed25519 || ssh-keygen -t ed25519 -N "" -f .secrets/id_ed25519 -C jupyter-slurm
 	kubectl create namespace slurm --dry-run=client -o yaml | kubectl apply -f -
@@ -64,25 +74,25 @@ jupyter-ssh-key: ## Generate the notebook->login SSH key + secret (prints public
 	@cat .secrets/id_ed25519.pub
 
 ## --- Validation --------------------------------------------------------------
-nccl-test: ## Run the 2-node NCCL all-reduce RDMA fabric test (needs 2 GPU nodes)
+nccl-test: check-kubectl ## Run the 2-node NCCL all-reduce RDMA fabric test (needs 2 GPU nodes)
 	kubectl apply --server-side -f $(JOBSET_MANIFEST)
 	kubectl apply -f examples/nccl-test.yaml
 	@echo "Watch: kubectl logs -f jobs/nccl-allreduce-worker-0"
 
-observability: ## Apply the Slurm PodMonitoring (GPU metrics are managed via DCGM)
+observability: check-kubectl ## Apply the Slurm PodMonitoring (GPU metrics are managed via DCGM)
 	kubectl apply -f observability/podmonitoring-slurm.yaml
 
 all: infra creds images gitops ## End-to-end: infra+Argo, images, then GitOps sync
 	@echo "Argo CD is syncing the platform. Watch: kubectl -n argocd get applications -w"
 
 ## --- Helm-first alternative (no Argo; consumes the same TF-rendered values) --
-bootstrap: ## [helm-first] GPU fabric + cert-manager + JobSet without Argo
+bootstrap: check-kubectl check-helm ## [helm-first] GPU fabric + cert-manager + JobSet without Argo
 	kubectl apply -k gitops/fabric
 	kubectl apply --server-side -f $(JOBSET_MANIFEST)
 	helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
 	  -n cert-manager --create-namespace -f bootstrap/cert-manager-values.yaml
 
-slurm: ## [helm-first] Install slurm-operator (+CRDs) and the Slurm cluster
+slurm: check-helm ## [helm-first] Install slurm-operator (+CRDs) and the Slurm cluster
 	helm upgrade --install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds \
 	  -n slinky --create-namespace
 	helm upgrade --install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
@@ -90,11 +100,11 @@ slurm: ## [helm-first] Install slurm-operator (+CRDs) and the Slurm cluster
 	helm upgrade --install slurm oci://ghcr.io/slinkyproject/charts/slurm \
 	  -n slurm --create-namespace -f gitops/rendered/slurm-values.yaml
 
-jupyter: jupyter-ssh-key ## [helm-first] Deploy JupyterHub (z2jh) in the slurm namespace
+jupyter: check-helm jupyter-ssh-key ## [helm-first] Deploy JupyterHub (z2jh) in the slurm namespace
 	helm repo add jupyterhub https://hub.jupyter.org/helm-chart/ 2>/dev/null || true
 	helm repo update jupyterhub
 	helm upgrade --install jupyterhub jupyterhub/jupyterhub \
 	  -n slurm --create-namespace -f gitops/rendered/jupyter-values.yaml
 
-destroy: ## Tear down all infrastructure (DESTRUCTIVE)
+destroy: check-terraform ## Tear down all infrastructure (DESTRUCTIVE)
 	$(TF) destroy
