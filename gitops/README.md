@@ -47,10 +47,13 @@ After that, every change flows through Git: edit `terraform.tfvars` ->
 
 ## Notes
 
-- If your Git repo is **private**, register repo credentials with Argo
-  (`argocd repo add ... --ssh-private-key-path ...`) so it can read this repo.
-- The `slurm` chart generates a munge/JWT secret; if Argo reports the Slurm
-  app perpetually `OutOfSync` on a Secret, add an `ignoreDifferences` entry for
-  it in `bootstrap/appset.yaml` (data field) or pre-create the secret.
+- OCI chart registries (ghcr/quay) and the git repo are registered with Argo
+  declaratively via `configs.repositories` in `terraform/gitops.tf`. If your
+  git repo is **private**, add a PAT or SSH key to that `gitops` entry.
+- Slurm's auth secrets (`slurm-auth-slurm`, `slurm-auth-jwt`) are pre-created by
+  `make gitops` because the chart's `lookup`+`randAscii` generation breaks under
+  Argo's `helm template` rendering (values set `slurmKey.create: false`).
+- Slurm accounting is disabled by default (the chart bundles no database); the
+  enable path is documented in `terraform/templates/slurm-values.yaml.tftpl`.
 - The Helm-first path still works for ad-hoc use: `make bootstrap && make slurm
   && make jupyter` consume the same `gitops/rendered/*` value files.

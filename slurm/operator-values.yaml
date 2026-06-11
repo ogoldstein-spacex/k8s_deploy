@@ -1,21 +1,30 @@
 # Values for the slurm-operator chart (oci://ghcr.io/slinkyproject/charts/slurm-operator).
-# Install order:
-#   helm install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds
-#   helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
-#     -n slinky --create-namespace -f slurm/operator-values.yaml
-#
-# Verify field names against the chart you pin:
-#   helm show values oci://ghcr.io/slinkyproject/charts/slurm-operator
+# Field names verified against the released chart (v1.1.x):
+#   - `operator` supports affinity/tolerations/resources (NO nodeSelector key)
+#   - `webhook` supports nodeSelector
+#   - CRDs are installed by the separate slurm-operator-crds chart (crds.enabled
+#     stays false here)
+#   - certManager.enabled defaults to true (cert-manager must be installed first)
 operator:
   replicas: 1
-  # Keep the controller off GPU nodes.
-  nodeSelector:
-    ml-pool: system
   resources:
     requests:
       cpu: 100m
       memory: 256Mi
+  # Keep the controller off GPU nodes (operator has no nodeSelector field).
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: ml-pool
+                operator: In
+                values: ["system"]
 
-# The operator watches the webhook certs issued by cert-manager.
+webhook:
+  replicas: 1
+  nodeSelector:
+    ml-pool: system
+
 certManager:
   enabled: true

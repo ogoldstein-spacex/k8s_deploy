@@ -5,6 +5,7 @@ locals {
     "artifactregistry.googleapis.com",
     "file.googleapis.com", # Filestore
     "iam.googleapis.com",
+    "cloudresourcemanager.googleapis.com", # required by google_project_iam_member
     "logging.googleapis.com",
     "monitoring.googleapis.com",
   ]

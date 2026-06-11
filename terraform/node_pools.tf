@@ -130,8 +130,13 @@ resource "google_container_node_pool" "gpu" {
     }
   }
 
-  upgrade_settings {
-    strategy = local.gpu_use_flex_start ? "SHORT_LIVED" : "SURGE"
+  # SHORT_LIVED is required for flex-start/queued provisioning. For normal
+  # pools we omit the block entirely and let GKE use its SURGE defaults.
+  dynamic "upgrade_settings" {
+    for_each = local.gpu_use_flex_start ? [1] : []
+    content {
+      strategy = "SHORT_LIVED"
+    }
   }
 
   node_config {
@@ -161,7 +166,8 @@ resource "google_container_node_pool" "gpu" {
       enabled = true
     }
 
-    # Full line-rate egress for collective communication.
+    # reservation: pin to the named reservation. flex-start/queued: the API
+    # requires NO_RESERVATION. spot: omit the block entirely.
     dynamic "reservation_affinity" {
       for_each = local.gpu_use_reservation ? [1] : (local.gpu_use_flex_start ? [1] : [])
       content {
@@ -177,11 +183,9 @@ resource "google_container_node_pool" "gpu" {
   }
 
   network_config {
-    # TIER_1 bandwidth is required to reach advertised GPUDirect throughput.
-    network_performance_config {
-      total_egress_bandwidth_tier = "TIER_1"
-    }
-
+    # NOTE: do NOT set network_performance_config TIER_1 here. A3 Ultra / A4
+    # are accelerator-optimized with fixed 3,600 Gbps networking; TIER_1 is
+    # unsupported on these machine types and the API rejects it.
     dynamic "additional_node_network_configs" {
       for_each = local.gpu_additional_networks
       content {

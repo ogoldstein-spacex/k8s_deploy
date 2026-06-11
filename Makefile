@@ -43,18 +43,31 @@ creds: check-gcloud ## Point kubectl at the new cluster
 ## --- Phase 2: images ---------------------------------------------------------
 slurmd-image: check-docker check-gcloud ## Build + push the slurmd CUDA image
 	gcloud auth configure-docker $(REGION)-docker.pkg.dev -q
-	docker build -t $(AR)/slurmd-cuda:$(SLURMD_IMAGE_TAG) slurm/images/slurmd-cuda
+	docker build --platform linux/amd64 -t $(AR)/slurmd-cuda:$(SLURMD_IMAGE_TAG) slurm/images/slurmd-cuda
 	docker push $(AR)/slurmd-cuda:$(SLURMD_IMAGE_TAG)
 
 jupyter-image: check-docker check-gcloud ## Build + push the JupyterLab image
 	gcloud auth configure-docker $(REGION)-docker.pkg.dev -q
-	docker build -t $(AR)/jupyter-slurm:$(JUPYTER_IMAGE_TAG) jupyter/images/jupyter-slurm
+	docker build --platform linux/amd64 -t $(AR)/jupyter-slurm:$(JUPYTER_IMAGE_TAG) jupyter/images/jupyter-slurm
 	docker push $(AR)/jupyter-slurm:$(JUPYTER_IMAGE_TAG)
 
 images: slurmd-image jupyter-image ## Build + push both images
 
 ## --- Phase 3: GitOps (PRIMARY) ----------------------------------------------
-gitops: check-git check-kubectl jupyter-ssh-key ## Commit the TF-rendered gitops/ and apply the Argo root app
+slurm-auth-keys: check-kubectl check-openssl ## Pre-create Slurm auth secrets (chart generation is Argo-incompatible)
+	@mkdir -p .secrets
+	kubectl create namespace slurm --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl -n slurm get secret slurm-auth-slurm >/dev/null 2>&1 || { \
+	  openssl rand 1024 > .secrets/slurm.key && \
+	  kubectl -n slurm create secret generic slurm-auth-slurm --from-file=slurm.key=.secrets/slurm.key && \
+	  rm -f .secrets/slurm.key; }
+	@kubectl -n slurm get secret slurm-auth-jwt >/dev/null 2>&1 || { \
+	  openssl rand 1024 > .secrets/jwt.key && \
+	  kubectl -n slurm create secret generic slurm-auth-jwt --from-file=jwt.key=.secrets/jwt.key && \
+	  rm -f .secrets/jwt.key; }
+	@echo "Slurm auth secrets present (slurm-auth-slurm, slurm-auth-jwt)."
+
+gitops: check-git check-kubectl jupyter-ssh-key slurm-auth-keys ## Commit the TF-rendered gitops/ and apply the Argo root app
 	git add gitops
 	@git diff --cached --quiet || git commit -m "chore: update gitops rendered manifests"
 	git push
@@ -92,7 +105,7 @@ bootstrap: check-kubectl check-helm ## [helm-first] GPU fabric + cert-manager + 
 	helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
 	  -n cert-manager --create-namespace -f bootstrap/cert-manager-values.yaml
 
-slurm: check-helm ## [helm-first] Install slurm-operator (+CRDs) and the Slurm cluster
+slurm: check-helm slurm-auth-keys ## [helm-first] Install slurm-operator (+CRDs) and the Slurm cluster
 	helm upgrade --install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds \
 	  -n slinky --create-namespace
 	helm upgrade --install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \

@@ -72,6 +72,15 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        # ApplicationSet creates all apps at once; sync-wave annotations do not
+        # strictly order ACROSS generated apps. Retries make the bring-up
+        # converge: slurm fails until CRDs/operator are healthy, then succeeds.
+        retry:
+          limit: 10
+          backoff:
+            duration: 30s
+            factor: 2
+            maxDuration: 5m
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true

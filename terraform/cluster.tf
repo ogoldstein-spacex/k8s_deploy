@@ -38,6 +38,10 @@ resource "google_container_cluster" "main" {
   name     = "${var.name_prefix}-gke"
   location = var.region
 
+  # Provider >= 5.0 defaults this to true, which blocks `terraform destroy`.
+  # Set explicitly so `make destroy` works; flip to true for prod clusters.
+  deletion_protection = false
+
   # Run a regional control plane (HA) but pin GPU nodes to a single zone later.
   node_locations = [var.zone]
 

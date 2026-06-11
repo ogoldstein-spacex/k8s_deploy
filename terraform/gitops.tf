@@ -90,10 +90,45 @@ resource "helm_release" "argocd" {
   namespace        = "argocd"
   create_namespace = true
 
-  # Keep Argo's components on the CPU/system pool.
   values = [yamlencode({
-    global = { nodeSelector = { "ml-pool" = "system" } }
-    # The applicationSet + repo-server also run on system nodes via global.
+    # Keep all Argo components on the CPU/system pool.
+    global = {
+      nodeSelector = {
+        "kubernetes.io/os" = "linux"
+        "ml-pool"          = "system"
+      }
+    }
+    configs = {
+      # OCI Helm registries MUST be registered with enableOCI for Argo to pull
+      # charts from them (repoURL in Applications is then the bare host/path,
+      # no oci:// scheme). HTTP helm repos need no registration but listing
+      # the public git repo here keeps everything declarative in one place.
+      repositories = {
+        ghcr-slinky = {
+          name      = "slinky"
+          type      = "helm"
+          url       = "ghcr.io/slinkyproject/charts"
+          enableOCI = "true"
+        }
+        quay-jetstack = {
+          name      = "jetstack"
+          type      = "helm"
+          url       = "quay.io/jetstack/charts"
+          enableOCI = "true"
+        }
+        jupyterhub = {
+          name = "jupyterhub"
+          type = "helm"
+          url  = "https://hub.jupyter.org/helm-chart/"
+        }
+        gitops = {
+          # Public repo needs no credentials; for a PRIVATE repo add
+          # username/password (PAT) or sshPrivateKey to this entry.
+          type = "git"
+          url  = var.gitops_repo_url
+        }
+      }
+    }
   })]
 
   depends_on = [google_container_node_pool.system]

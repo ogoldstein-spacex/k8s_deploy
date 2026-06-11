@@ -9,7 +9,6 @@
 # A healthy run prints matching all-reduce results from all 16 ranks and NCCL
 # debug lines showing the gIB (RoCE/RDMA) transport in use.
 #SBATCH --job-name=ddp-allreduce
-#SBATCH --partition=gpu-rdma
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8

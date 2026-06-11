@@ -30,7 +30,7 @@ flowchart TB
   subgraph apps [Argo CD managed]
     gib["gpu-fabric app: NCCL GIB DaemonSet + Network objects"]
     certmgr[cert-manager]
-    slurm["Slurm: controller + accounting + login + gpu NodeSet"]
+    slurm["Slurm: controller + login + gpu NodeSet"]
     jhub["JupyterHub: CPU / L4 / H200 profiles"]
   end
   dev[User] -->|browser| jhub
@@ -57,6 +57,12 @@ flowchart TB
 - Auth for Terraform: on a GCE VM with a service account this is automatic
   (metadata server); otherwise run
   `gcloud auth login && gcloud auth application-default login`.
+- IAM for the identity running Terraform (sandbox projects: `roles/editor` +
+  `roles/resourcemanager.projectIamAdmin` is the simple path). Granular:
+  `container.admin`, `compute.admin` (or `networkAdmin` + instance perms),
+  `iam.serviceAccountAdmin`, `iam.serviceAccountUser`,
+  `resourcemanager.projectIamAdmin`, `artifactregistry.admin`, `file.editor`,
+  `serviceusage.serviceUsageAdmin`.
 
 ### Installing the CLIs
 
@@ -92,6 +98,22 @@ Docker Desktop; then `gcloud components install gke-gcloud-auth-plugin`.
 **Any distro (no root):** download the `terraform` static binary from
 [developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install)
 into `~/bin` and add it to `PATH`.
+
+### Troubleshooting `terraform init` provider errors
+
+- *"doesn't match any of the checksums recorded in the dependency lock file"*:
+  your platform isn't in `.terraform.lock.hcl`. Pull the latest `main` (the
+  lock file includes linux/darwin amd64+arm64), or locally run
+  `rm terraform/.terraform.lock.hcl && terraform -chdir=terraform init`.
+- *"could not connect to registry.terraform.io" / timeouts*: corporate proxy or
+  blocked egress. Export `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`, or mirror
+  providers internally (`terraform providers mirror`).
+- *"x509: certificate signed by unknown authority"*: TLS-intercepting proxy.
+  Append your corporate root CA to the system trust store
+  (`/etc/pki/ca-trust/source/anchors/` + `update-ca-trust` on CentOS).
+- *"Unsupported Terraform Core version"*: this repo requires terraform >= 1.6
+  (`terraform version`); old distro packages (EPEL) are often too old — install
+  from the HashiCorp repo above.
 
 ## Quickstart (Argo CD / GitOps)
 
@@ -176,11 +198,22 @@ make observability
 
 - Helm charts float to their latest version (Argo `targetRevision: "*"`, and
   Argo CD itself installs the latest chart). Pin later if you need repeatability.
-- Slurm chart field names evolve; cross-check against
-  `helm show values oci://ghcr.io/slinkyproject/charts/slurm`.
+  Values were verified against slurm/slurm-operator `1.1.x`, jupyterhub `4.4.x`,
+  cert-manager `1.20.x`, argo-cd `9.5.x`.
+- **Slurm accounting is off by default** — the slurm chart bundles no database.
+  The enable path (MariaDB + password secret + `accounting.storageConfig`) is
+  documented in `terraform/templates/slurm-values.yaml.tftpl`.
+- Slurm auth keys are **pre-created** by `make gitops` / `make slurm`
+  (`slurm-auth-slurm`, `slurm-auth-jwt` in the `slurm` namespace) because the
+  chart's `lookup`+`randAscii` generation is incompatible with Argo's
+  `helm template` rendering (immutable-secret sync failures). Don't delete them;
+  rotating them requires restarting all Slurm components.
+- After install, verify the Slurm partition with `sinfo` (jobs use the default
+  `all` partition) and the controller metrics pod labels/port against
+  `observability/podmonitoring-slurm.yaml`.
 - If NCCL test pods stay `SchedulingGated`, remove the `schedulingGates` block in
   `examples/nccl-test.yaml`.
 - Do **not** combine the GKE DRANET driver with the multi-network API used here.
-- If Argo shows the `slurm` app perpetually `OutOfSync` on a generated Secret
-  (munge/JWT), add an `ignoreDifferences` entry in `gitops/bootstrap/appset.yaml`.
-- Private repo: register repo credentials with Argo so it can read `gitops/`.
+- Private repo: Terraform registers the git repo with Argo without credentials;
+  for a private repo add a PAT/SSH key to the `gitops` entry in
+  `configs.repositories` (see `terraform/gitops.tf`).
